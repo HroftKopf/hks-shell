@@ -15,8 +15,67 @@ use wayland_client::{
     protocol::{wl_compositor, wl_registry, wl_shm, wl_surface},
 };
 
+const BYTES_PER_PIXEL: i32 = 4;
+
 struct App {
     shm: Shm,
+}
+
+struct GlassStyle {
+    width: i32,
+    height: i32,
+    radius: i32,
+
+    // Порядок байтов в памяти: blue, green, red, alpha.
+    // Цвет уже должен быть предумножен на alpha.
+    tint_bgra: [u8; 4],
+}
+
+impl GlassStyle {
+    fn stride(&self) -> i32 {
+        self.width * BYTES_PER_PIXEL
+    }
+
+    fn buffer_size(&self) -> usize {
+        (self.stride() * self.height) as usize
+    }
+}
+
+fn render_glass(canvas: &mut [u8], style: &GlassStyle) {
+    let radius = style.radius as f32;
+
+    let inner_right = style.width as f32 - radius - 1.0;
+    let inner_bottom = style.height as f32 - radius - 1.0;
+
+    for y in 0..style.height {
+        for x in 0..style.width {
+            let x = x as f32;
+            let y = y as f32;
+
+            let nearest_x = x.clamp(radius, inner_right);
+            let nearest_y = y.clamp(radius, inner_bottom);
+
+            let dx = x - nearest_x;
+            let dy = y - nearest_y;
+
+            let distance = (dx * dx + dy * dy).sqrt();
+
+            let coverage = (radius + 0.5 - distance).clamp(0.0, 1.0);
+
+            let pixel_color = [
+                (style.tint_bgra[0] as f32 * coverage).round() as u8,
+                (style.tint_bgra[1] as f32 * coverage).round() as u8,
+                (style.tint_bgra[2] as f32 * coverage).round() as u8,
+                (style.tint_bgra[3] as f32 * coverage).round() as u8,
+            ];
+
+            let offset = ((y as i32 * style.width + x as i32) * BYTES_PER_PIXEL) as usize;
+
+            let pixel_end = offset + BYTES_PER_PIXEL as usize;
+
+            canvas[offset..pixel_end].copy_from_slice(&pixel_color);
+        }
+    }
 }
 
 impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for App {
@@ -86,10 +145,16 @@ impl ShmHandler for App {
 }
 
 delegate_shm!(App);
-
 delegate_layer!(App);
 
 fn main() {
+    let style = GlassStyle {
+        width: 240,
+        height: 240,
+        radius: 14,
+        tint_bgra: [0x40, 0x3C, 0x3A, 0x40],
+    };
+
     let connection =
         Connection::connect_to_env().expect("не удалось подключиться к Wayland-композитору");
 
@@ -106,8 +171,6 @@ fn main() {
 
     let surface = compositor.create_surface(&queue_handle, ());
 
-    println!("Базовая wl_surface создана");
-
     let layer_shell =
         LayerShell::bind(&globals, &queue_handle).expect("Niri не предоставляет Layer Shell");
 
@@ -119,11 +182,11 @@ fn main() {
         None,
     );
 
-    let mut pool = SlotPool::new(240 * 240 * 4, &shm).expect("не удалось создать SHM-пул");
+    let mut pool = SlotPool::new(style.buffer_size(), &shm).expect("не удалось создать SHM-пул");
 
     let mut app = App { shm };
 
-    layer_surface.set_size(240, 240);
+    layer_surface.set_size(style.width as u32, style.height as u32);
     layer_surface.set_anchor(Anchor::TOP | Anchor::LEFT);
     layer_surface.set_margin(120, 0, 0, 120);
 
@@ -134,16 +197,19 @@ fn main() {
         .expect("не удалось получить configure от Niri");
 
     let (buffer, canvas) = pool
-        .create_buffer(240, 240, 240 * 4, wl_shm::Format::Argb8888)
+        .create_buffer(
+            style.width,
+            style.height,
+            style.stride(),
+            wl_shm::Format::Argb8888,
+        )
         .expect("не удалось создать пиксельный буфер");
 
-    let color: u32 = 0x40_3A_3C_40;
+    render_glass(canvas, &style);
 
-    for pixel in canvas.chunks_exact_mut(4) {
-        pixel.copy_from_slice(&color.to_le_bytes());
-    }
-
-    layer_surface.wl_surface().damage_buffer(0, 0, 240, 240);
+    layer_surface
+        .wl_surface()
+        .damage_buffer(0, 0, style.width, style.height);
 
     buffer
         .attach_to(layer_surface.wl_surface())
@@ -151,7 +217,7 @@ fn main() {
 
     layer_surface.commit();
 
-    println!("SHM-буфер отрисован");
+    println!("Стеклянная поверхность отрисована");
 
     loop {
         event_queue
