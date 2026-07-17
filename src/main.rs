@@ -17,6 +17,9 @@ use wayland_client::{
 
 const BYTES_PER_PIXEL: i32 = 4;
 
+const POSITION_TOP: i32 = 120;
+const POSITION_LEFT: i32 = 120;
+
 struct App {
     shm: Shm,
 }
@@ -24,11 +27,17 @@ struct App {
 struct GlassStyle {
     width: i32,
     height: i32,
-    radius: i32,
+    radius: f32,
 
-    // Порядок байтов в памяти: blue, green, red, alpha.
-    // Цвет уже должен быть предумножен на alpha.
-    tint_bgra: [u8; 4],
+    // Обычный, ещё не предумноженный цвет: red, green, blue.
+    // Значения находятся в диапазоне 0.0..=1.0.
+    tint_rgb: [f32; 3],
+
+    base_alpha: f32,
+    border_width: f32,
+    highlight_strength: f32,
+    shadow_strength: f32,
+    sheen_strength: f32,
 }
 
 impl GlassStyle {
@@ -41,37 +50,124 @@ impl GlassStyle {
     }
 }
 
-fn render_glass(canvas: &mut [u8], style: &GlassStyle) {
-    let radius = style.radius as f32;
+fn smoothstep(edge_start: f32, edge_end: f32, value: f32) -> f32 {
+    let progress = ((value - edge_start) / (edge_end - edge_start)).clamp(0.0, 1.0);
 
-    let inner_right = style.width as f32 - radius - 1.0;
-    let inner_bottom = style.height as f32 - radius - 1.0;
+    progress * progress * (3.0 - 2.0 * progress)
+}
+
+fn rounded_rectangle_distance(x: f32, y: f32, width: f32, height: f32, radius: f32) -> f32 {
+    let center_x = width / 2.0;
+    let center_y = height / 2.0;
+
+    let local_x = (x - center_x).abs();
+    let local_y = (y - center_y).abs();
+
+    let half_width = width / 2.0;
+    let half_height = height / 2.0;
+
+    let distance_x = local_x - (half_width - radius);
+    let distance_y = local_y - (half_height - radius);
+
+    let outside_x = distance_x.max(0.0);
+    let outside_y = distance_y.max(0.0);
+
+    let outside_distance = (outside_x * outside_x + outside_y * outside_y).sqrt();
+    let inside_distance = distance_x.max(distance_y).min(0.0);
+
+    outside_distance + inside_distance - radius
+}
+
+fn premultiplied_bgra(rgb: [f32; 3], alpha: f32, coverage: f32) -> [u8; 4] {
+    let final_alpha = (alpha * coverage).clamp(0.0, 1.0);
+
+    let red = (rgb[0].clamp(0.0, 1.0) * final_alpha * 255.0).round() as u8;
+    let green = (rgb[1].clamp(0.0, 1.0) * final_alpha * 255.0).round() as u8;
+    let blue = (rgb[2].clamp(0.0, 1.0) * final_alpha * 255.0).round() as u8;
+    let alpha = (final_alpha * 255.0).round() as u8;
+
+    // Формат ARGB8888 на little-endian машине хранится как BGRA.
+    [blue, green, red, alpha]
+}
+
+fn render_glass(canvas: &mut [u8], style: &GlassStyle) {
+    let width = style.width as f32;
+    let height = style.height as f32;
 
     for y in 0..style.height {
         for x in 0..style.width {
-            let x = x as f32;
-            let y = y as f32;
+            // Работаем с центром пикселя, а не с его верхним левым углом.
+            let pixel_x = x as f32 + 0.5;
+            let pixel_y = y as f32 + 0.5;
 
-            let nearest_x = x.clamp(radius, inner_right);
-            let nearest_y = y.clamp(radius, inner_bottom);
+            let distance =
+                rounded_rectangle_distance(pixel_x, pixel_y, width, height, style.radius);
 
-            let dx = x - nearest_x;
-            let dy = y - nearest_y;
+            // distance < 0: внутри фигуры.
+            // distance > 0: снаружи фигуры.
+            let coverage = 1.0 - smoothstep(-0.75, 0.75, distance);
 
-            let distance = (dx * dx + dy * dy).sqrt();
-
-            let coverage = (radius + 0.5 - distance).clamp(0.0, 1.0);
-
-            let pixel_color = [
-                (style.tint_bgra[0] as f32 * coverage).round() as u8,
-                (style.tint_bgra[1] as f32 * coverage).round() as u8,
-                (style.tint_bgra[2] as f32 * coverage).round() as u8,
-                (style.tint_bgra[3] as f32 * coverage).round() as u8,
-            ];
-
-            let offset = ((y as i32 * style.width + x as i32) * BYTES_PER_PIXEL) as usize;
-
+            let offset = ((y * style.width + x) * BYTES_PER_PIXEL) as usize;
             let pixel_end = offset + BYTES_PER_PIXEL as usize;
+
+            if coverage <= 0.0 {
+                canvas[offset..pixel_end].fill(0);
+                continue;
+            }
+
+            let normalized_x = pixel_x / width;
+            let normalized_y = pixel_y / height;
+
+            // Насколько близко пиксель расположен к внутренней границе.
+            let distance_inside = (-distance).max(0.0);
+
+            let edge_factor = 1.0 - smoothstep(0.0, style.border_width, distance_inside);
+
+            // Верхняя и левая части границы получают больше света.
+            let top_left_direction = (1.0 - normalized_x) * 0.45 + (1.0 - normalized_y) * 0.55;
+
+            let border_highlight =
+                edge_factor * top_left_direction.powf(2.2) * style.highlight_strength;
+
+            // Нижняя и правая части границы слегка затемняются.
+            let bottom_right_direction = normalized_x * 0.45 + normalized_y * 0.55;
+
+            let border_shadow =
+                edge_factor * bottom_right_direction.powf(2.0) * style.shadow_strength;
+
+            // Широкая мягкая диагональная полоса блика.
+            let sheen_position = normalized_x * 0.78 + normalized_y * 0.22;
+            let sheen_distance = (sheen_position - 0.28).abs();
+
+            let diagonal_sheen = (1.0 - smoothstep(0.0, 0.18, sheen_distance))
+                * (1.0 - normalized_y).powf(0.8)
+                * style.sheen_strength;
+
+            // Верх материала чуть светлее, низ немного темнее.
+            let top_glow = (1.0 - normalized_y).powf(2.0) * 0.045;
+            let bottom_shade = normalized_y.powf(2.0) * 0.035;
+
+            let total_light = (border_highlight + diagonal_sheen + top_glow).clamp(0.0, 1.0);
+
+            let total_shadow = (border_shadow + bottom_shade).clamp(0.0, 1.0);
+
+            let mut rgb = style.tint_rgb;
+
+            for channel in &mut rgb {
+                // Смешиваем исходный цвет с белым.
+                *channel += (1.0 - *channel) * total_light;
+
+                // Затем слегка затемняем противоположную сторону.
+                *channel *= 1.0 - total_shadow * 0.70;
+            }
+
+            let alpha = (style.base_alpha
+                + border_highlight * 0.20
+                + diagonal_sheen * 0.12
+                + border_shadow * 0.10)
+                .clamp(0.0, 0.65);
+
+            let pixel_color = premultiplied_bgra(rgb, alpha, coverage);
 
             canvas[offset..pixel_end].copy_from_slice(&pixel_color);
         }
@@ -151,8 +247,16 @@ fn main() {
     let style = GlassStyle {
         width: 240,
         height: 240,
-        radius: 14,
-        tint_bgra: [0x40, 0x3C, 0x3A, 0x40],
+        radius: 14.0,
+
+        // Очень светлый холодный оттенок.
+        tint_rgb: [0.90, 0.94, 1.0],
+
+        base_alpha: 0.04,
+        border_width: 6.4,
+        highlight_strength: 0.25,
+        shadow_strength: 0.28,
+        sheen_strength: 0.05,
     };
 
     let connection =
@@ -188,8 +292,9 @@ fn main() {
 
     layer_surface.set_size(style.width as u32, style.height as u32);
     layer_surface.set_anchor(Anchor::TOP | Anchor::LEFT);
-    layer_surface.set_margin(120, 0, 0, 120);
+    layer_surface.set_margin(POSITION_TOP, 0, 0, POSITION_LEFT);
 
+    // Первый commit просит Niri настроить поверхность.
     layer_surface.commit();
 
     event_queue
@@ -217,7 +322,7 @@ fn main() {
 
     layer_surface.commit();
 
-    println!("Стеклянная поверхность отрисована");
+    println!("Стеклянный материал отрисован");
 
     loop {
         event_queue
