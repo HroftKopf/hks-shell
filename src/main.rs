@@ -137,7 +137,7 @@ fn main() {
         .create_buffer(240, 240, 240 * 4, wl_shm::Format::Argb8888)
         .expect("не удалось создать пиксельный буфер");
 
-    let color: u32 = 0xCC_E8_F0_FF;
+    let color: u32 = 0x40_3A_3C_40;
 
     for pixel in canvas.chunks_exact_mut(4) {
         pixel.copy_from_slice(&color.to_le_bytes());
