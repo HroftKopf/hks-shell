@@ -426,6 +426,14 @@ impl PointerHandler for App {
                 let delta_x = pointer_x - self.grab_position.0;
                 let delta_y = pointer_y - self.grab_position.1;
 
+                // grab_position раньше выставлялся только в Press и больше
+                // никогда не обновлялся. delta каждый раз считалась от точки
+                // первоначального нажатия, хотя pointer-координаты приходят
+                // surface-local и "уезжают" вместе с самой поверхностью при
+                // каждом set_margin — это давало дрейф/ускорение при драге.
+                // Обновляем точку отсчёта на каждое обработанное Motion.
+                self.grab_position = (pointer_x, pointer_y);
+
                 if delta_x.abs() >= 0.5 || delta_y.abs() >= 0.5 {
                     let max_left = (OUTPUT_WIDTH - self.surface_width).max(0);
                     let max_top = (OUTPUT_HEIGHT - self.surface_height).max(0);
