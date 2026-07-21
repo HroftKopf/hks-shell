@@ -1,0 +1,88 @@
+// hks-shell — required Niri configuration fragment
+// ============================================================================
+// The liquid-glass optics (blur / refraction / chromatic aberration / shadow)
+// are rendered by the COMPOSITOR, not by the hks-shell client. The client only
+// draws a translucent alpha-mask (shape + tint + rim) into an SHM/GPU buffer;
+// everything below is what turns that mask into liquid glass.
+//
+// This requires the niri-glass compositor fork (see README):
+//   https://github.com/zaroutt/Niri-glass
+//
+// USAGE: include this file from your personal Niri config, e.g.:
+//   include "/absolute/path/to/hks-shell/config/niri/hks-shell.kdl"
+// and REMOVE any inline `blur { }` / `layer-rule { match namespace="^hks-shell$" }`
+// blocks from your personal config so they don't conflict/duplicate.
+//
+// Values here mirror the current tuned prototype. Most are hot-reloaded by Niri
+// on save; only shader-source changes in the fork need a rebuild.
+// ============================================================================
+
+// Global blur strength — shared by every background-effect (the layer-rule
+// below sets `blur true`, which uses these passes).
+blur {
+    passes 3
+    offset 2
+    noise 0.053
+    saturation 1.0
+}
+
+layer-rule {
+    match namespace="^hks-shell$"
+
+    // MUST match the client's drawn corner radius (GlassStyle.radius in the
+    // client). Niri clips the surface geometry to this rounded rect; anything
+    // the client draws outside it is cut before the effect is applied.
+    geometry-corner-radius 40
+
+    // Soft drop shadow under the object (ref: Apple liquid glass control center).
+    // Compositor-drawn outside the silhouette — it cannot live in the client
+    // SHM buffer because the plate's straight sides touch the buffer edge.
+    // draw-behind-window intentionally OFF: the glass is translucent, so
+    // drawing behind it would darken the background through the surface.
+    shadow {
+        on
+        softness 26
+        spread 0
+        offset x=0 y=10
+        color "#00000055"
+    }
+
+    background-effect {
+        blur true
+        xray false
+        noise 0.009
+        saturation 1.0
+
+        liquid-glass {
+            // Refraction magnitude near the edge (~px of background displacement).
+            refraction-strength 10
+            // Lower = wider refraction zone.
+            power-factor 1
+            refraction-power 20
+            physical-refraction 0.5
+
+            // Convex-lens dome. 0 = flat (edge-only), higher = magnifier bulge.
+            lens-distortion 0
+
+            // Width of the refraction band (live knob). ~0.15 ≈ 93px.
+            edge-thickness 0.015
+            edge-padding 0
+            edge-lighting 0.5
+
+            // Edge rim/glow brightness.
+            glow-weight 1.3
+
+            brightness 1
+            contrast 1.0
+            saturation 0.8
+            vibrancy 0.01
+
+            adaptive-dim 0.1
+            adaptive-boost 0
+
+            // Chromatic aberration at the edge. 0.15 ≈ thin glassy fringe,
+            // higher approaches a prismatic rainbow.
+            fringing 0.5
+        }
+    }
+}

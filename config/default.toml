@@ -1,0 +1,46 @@
+# hks-shell configuration — defaults
+# ============================================================================
+# SCAFFOLD ONLY (Stage 1): this file documents the intended user-tunable knobs
+# with sane defaults. It is NOT yet read by the code — wiring comes in a later
+# stage. Visual-glass parameters (blur / refraction / edge width / tint) that
+# are currently applied by the COMPOSITOR live in config/niri/hks-shell.kdl;
+# the fields duplicated here describe the target once the client owns rendering.
+# ============================================================================
+
+[launcher]
+# Width of the search panel (logical px). Height grows with results.
+width = 640
+# Corner radius — must be kept in sync with the compositor geometry-corner-radius.
+corner_radius = 40
+# Vertical anchor: 0.0 = top, 0.5 = center. Slightly above center per the brief.
+vertical_anchor = 0.38
+# Global hotkey that toggles the launcher (bound in Niri, mirrored here for docs).
+hotkey = "Mod+Space"
+
+[bar]
+# Height of the top bar (logical px).
+height = 34
+# Order of the right-hand modules, left to right.
+right_modules = ["internet", "vpn", "volume", "netspeed", "ram", "ssd", "cpu", "date", "time"]
+# Date format (strftime), e.g. "Wed Jun 3".
+date_format = "%a %b %-d"
+time_format = "%H:%M"
+
+[glass]
+# These mirror config/niri/hks-shell.kdl while the compositor owns optics.
+tint = "#EEF4FF"      # light bluish tint
+opacity = 0.06        # base material alpha
+blur_passes = 3
+refraction_strength = 10
+edge_width_px = 93    # optical edge band width — size-INDEPENDENT (px, not %)
+fringing = 0.5
+
+[animation]
+# Time-based (not frame-based). Durations in milliseconds.
+open_ms = 160
+close_ms = 120
+resize_ms = 140
+
+[font]
+family = "sans-serif"
+size = 15
