@@ -20,6 +20,7 @@ use wayland_client::{
 };
 
 use crate::renderer::{GlassParams, Renderer};
+use crate::search::{Search, SearchResult};
 
 // Current output: 3440x1440 @ scale 1.2 -> logical 2867x1200.
 // Layer Shell works in logical coordinates.
@@ -36,6 +37,10 @@ pub struct App {
 
     /// Current search query text.
     pub query: String,
+
+    pub search: Search,
+    pub results: Vec<SearchResult>,
+    pub selected: usize,
 
     pub renderer: Option<Renderer>,
 
@@ -75,19 +80,37 @@ impl App {
                 // For now Escape closes the launcher; later it will just hide it.
                 self.running = false;
             }
+            Keysym::Return | Keysym::KP_Enter => {
+                if let Some(result) = self.results.get(self.selected) {
+                    result.action.run();
+                }
+                self.running = false;
+            }
             Keysym::BackSpace => {
                 self.query.pop();
-                self.refresh();
+                self.on_query_changed();
             }
             _ => {
                 if let Some(text) = &event.utf8 {
                     if !text.is_empty() && !text.chars().any(char::is_control) {
                         self.query.push_str(text);
-                        self.refresh();
+                        self.on_query_changed();
                     }
                 }
             }
         }
+    }
+
+    /// Re-run the search and redraw after the query changed.
+    fn on_query_changed(&mut self) {
+        self.results = self.search.query(&self.query);
+        self.selected = 0;
+        match self.results.first() {
+            Some(top) => println!("top: {} (score {})", top.title, top.score),
+            None if !self.query.is_empty() => println!("(no match for {:?})", self.query),
+            None => {}
+        }
+        self.refresh();
     }
 
     /// Push the current query (or a placeholder) to the renderer and redraw.

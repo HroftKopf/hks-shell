@@ -1,5 +1,6 @@
 mod app;
 mod renderer;
+mod search;
 
 use smithay_client_toolkit::{
     registry::RegistryState,
@@ -55,6 +56,10 @@ fn main() {
         keyboard: None,
 
         query: String::new(),
+
+        search: search::Search::new(),
+        results: Vec::new(),
+        selected: 0,
 
         renderer: None,
 
