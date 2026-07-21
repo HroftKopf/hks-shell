@@ -1,11 +1,12 @@
 use std::ffi::c_void;
 
 use smithay_client_toolkit::{
-    delegate_layer, delegate_pointer, delegate_registry, delegate_seat,
+    delegate_keyboard, delegate_layer, delegate_pointer, delegate_registry, delegate_seat,
     registry::{ProvidesRegistryState, RegistryState},
     registry_handlers,
     seat::{
         Capability, SeatHandler, SeatState,
+        keyboard::{KeyEvent, KeyboardHandler, Keysym, Modifiers, RawModifiers},
         pointer::{BTN_LEFT, PointerEvent, PointerEventKind, PointerHandler},
     },
     shell::{
@@ -15,7 +16,7 @@ use smithay_client_toolkit::{
 };
 use wayland_client::{
     Connection, Dispatch, Proxy, QueueHandle,
-    protocol::{wl_compositor, wl_pointer, wl_seat, wl_surface},
+    protocol::{wl_compositor, wl_keyboard, wl_pointer, wl_seat, wl_surface},
 };
 
 use crate::renderer::{GlassParams, Renderer};
@@ -31,6 +32,10 @@ pub struct App {
 
     pub layer_surface: LayerSurface,
     pub pointer: Option<wl_pointer::WlPointer>,
+    pub keyboard: Option<wl_keyboard::WlKeyboard>,
+
+    /// Current search query text.
+    pub query: String,
 
     pub renderer: Option<Renderer>,
 
@@ -61,6 +66,28 @@ impl App {
             self.surface_height as u32,
             GlassParams::default(),
         ));
+    }
+
+    /// Apply a key press to the search query. Shared by press and key-repeat.
+    fn handle_key(&mut self, event: &KeyEvent) {
+        match event.keysym {
+            Keysym::Escape => {
+                // For now Escape closes the launcher; later it will just hide it.
+                self.running = false;
+            }
+            Keysym::BackSpace => {
+                self.query.pop();
+                println!("query: {:?}", self.query);
+            }
+            _ => {
+                if let Some(text) = &event.utf8 {
+                    if !text.is_empty() && !text.chars().any(char::is_control) {
+                        self.query.push_str(text);
+                        println!("query: {:?}", self.query);
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -140,6 +167,13 @@ impl SeatHandler for App {
                 .expect("failed to obtain Wayland pointer");
             self.pointer = Some(pointer);
         }
+        if capability == Capability::Keyboard && self.keyboard.is_none() {
+            let keyboard = self
+                .seat_state
+                .get_keyboard(queue_handle, &seat, None)
+                .expect("failed to obtain Wayland keyboard");
+            self.keyboard = Some(keyboard);
+        }
     }
 
     fn remove_capability(
@@ -154,6 +188,11 @@ impl SeatHandler for App {
                 pointer.release();
             }
             self.dragging = false;
+        }
+        if capability == Capability::Keyboard {
+            if let Some(keyboard) = self.keyboard.take() {
+                keyboard.release();
+            }
         }
     }
 
@@ -229,6 +268,74 @@ impl PointerHandler for App {
     }
 }
 
+impl KeyboardHandler for App {
+    fn enter(
+        &mut self,
+        _connection: &Connection,
+        _queue_handle: &QueueHandle<Self>,
+        _keyboard: &wl_keyboard::WlKeyboard,
+        _surface: &wl_surface::WlSurface,
+        _serial: u32,
+        _raw: &[u32],
+        _keysyms: &[Keysym],
+    ) {
+    }
+
+    fn leave(
+        &mut self,
+        _connection: &Connection,
+        _queue_handle: &QueueHandle<Self>,
+        _keyboard: &wl_keyboard::WlKeyboard,
+        _surface: &wl_surface::WlSurface,
+        _serial: u32,
+    ) {
+    }
+
+    fn press_key(
+        &mut self,
+        _connection: &Connection,
+        _queue_handle: &QueueHandle<Self>,
+        _keyboard: &wl_keyboard::WlKeyboard,
+        _serial: u32,
+        event: KeyEvent,
+    ) {
+        self.handle_key(&event);
+    }
+
+    fn repeat_key(
+        &mut self,
+        _connection: &Connection,
+        _queue_handle: &QueueHandle<Self>,
+        _keyboard: &wl_keyboard::WlKeyboard,
+        _serial: u32,
+        event: KeyEvent,
+    ) {
+        self.handle_key(&event);
+    }
+
+    fn release_key(
+        &mut self,
+        _connection: &Connection,
+        _queue_handle: &QueueHandle<Self>,
+        _keyboard: &wl_keyboard::WlKeyboard,
+        _serial: u32,
+        _event: KeyEvent,
+    ) {
+    }
+
+    fn update_modifiers(
+        &mut self,
+        _connection: &Connection,
+        _queue_handle: &QueueHandle<Self>,
+        _keyboard: &wl_keyboard::WlKeyboard,
+        _serial: u32,
+        _modifiers: Modifiers,
+        _raw_modifiers: RawModifiers,
+        _layout: u32,
+    ) {
+    }
+}
+
 impl ProvidesRegistryState for App {
     fn registry(&mut self) -> &mut RegistryState {
         &mut self.registry_state
@@ -240,4 +347,5 @@ impl ProvidesRegistryState for App {
 delegate_registry!(App);
 delegate_seat!(App);
 delegate_pointer!(App);
+delegate_keyboard!(App);
 delegate_layer!(App);

@@ -7,6 +7,6 @@ edition = "2024"
 bytemuck = { version = "1.25.2", features = ["derive"] }
 pollster = "1.0.1"
 raw-window-handle = "0.6.2"
-smithay-client-toolkit = { version = "0.20.0", default-features = false }
+smithay-client-toolkit = { version = "0.20.0", default-features = false, features = ["xkbcommon"] }
 wayland-client = { version = "0.31.14", features = ["system"] }
 wgpu = "30.0.0"

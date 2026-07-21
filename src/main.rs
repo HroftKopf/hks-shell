@@ -6,7 +6,7 @@ use smithay_client_toolkit::{
     seat::SeatState,
     shell::{
         WaylandSurface,
-        wlr_layer::{Anchor, Layer, LayerShell},
+        wlr_layer::{Anchor, KeyboardInteractivity, Layer, LayerShell},
     },
 };
 use wayland_client::{
@@ -15,8 +15,8 @@ use wayland_client::{
 
 use app::{App, OUTPUT_HEIGHT, OUTPUT_WIDTH};
 
-const SURFACE_WIDTH: i32 = 400;
-const SURFACE_HEIGHT: i32 = 200;
+const SURFACE_WIDTH: i32 = 300;
+const SURFACE_HEIGHT: i32 = 50;
 
 fn main() {
     let initial_left = ((OUTPUT_WIDTH - SURFACE_WIDTH) / 2).max(0);
@@ -52,6 +52,9 @@ fn main() {
 
         layer_surface,
         pointer: None,
+        keyboard: None,
+
+        query: String::new(),
 
         renderer: None,
 
@@ -70,6 +73,9 @@ fn main() {
     app.layer_surface
         .set_size(SURFACE_WIDTH as u32, SURFACE_HEIGHT as u32);
     app.layer_surface.set_anchor(Anchor::TOP | Anchor::LEFT);
+    // Grab keyboard focus so the launcher receives typed input immediately.
+    app.layer_surface
+        .set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
     app.layer_surface
         .set_margin(app.position_top, 0, 0, app.position_left);
 

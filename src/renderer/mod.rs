@@ -29,7 +29,7 @@ impl Default for GlassParams {
     fn default() -> Self {
         // Mirrors the previous SHM prototype values.
         Self {
-            radius: 40.0,
+            radius: 25.0,
             edge_feather: 3.5,
             material_fade_width: 20.0,
             edge_alpha_scale: 0.18,
