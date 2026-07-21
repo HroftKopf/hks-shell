@@ -13,8 +13,8 @@ struct Uniforms {
     base_alpha: f32,
     border_width: f32,
     highlight_strength: f32,
-    _pad0: f32,
-    _pad1: f32,
+    sel_top: f32,
+    sel_height: f32,
     _pad2: f32,
     tint: vec3<f32>,
     _pad3: f32,
@@ -83,7 +83,7 @@ fn fs_main(@builtin(position) frag: vec4<f32>) -> @location(0) vec4<f32> {
     var a = clamp(u.base_alpha * edge_material_scale + border_highlight * 0.12, 0.0, 0.65);
 
     // Magnifier icon on the left: a ring plus a diagonal handle, drawn in grey.
-    let icon_center = vec2<f32>(23.0, res.y * 0.5);
+    let icon_center = vec2<f32>(23.0, 25.0);
     let ip = p - icon_center;
     let ring = abs(length(ip) - 6.5) - 1.4;
     let handle = sd_segment(ip, vec2<f32>(4.6, 4.6), vec2<f32>(10.4, 10.4)) - 1.6;
@@ -91,6 +91,17 @@ fn fs_main(@builtin(position) frag: vec4<f32>) -> @location(0) vec4<f32> {
     let icon_cov = (1.0 - smootherstep(-0.75, 0.75, icon_d)) * coverage;
     rgb = mix(rgb, vec3<f32>(0.95, 0.95, 0.98), icon_cov);
     a = max(a, icon_cov * 0.92);
+
+    // Selected-row highlight: a soft light rounded band behind the row.
+    if (u.sel_height > 0.5) {
+        let inset_x = 8.0;
+        let hl_center = vec2<f32>(res.x * 0.5, u.sel_top + u.sel_height * 0.5);
+        let hl_half = vec2<f32>(res.x * 0.5 - inset_x, u.sel_height * 0.5 - 3.0);
+        let hl_d = sd_round_rect(p - hl_center, hl_half, 8.0);
+        let hl_cov = (1.0 - smootherstep(-1.0, 1.0, hl_d)) * coverage;
+        rgb = mix(rgb, vec3<f32>(1.0, 1.0, 1.0), hl_cov * 0.22);
+        a = max(a, hl_cov * 0.30);
+    }
 
     let final_alpha = a * coverage;
 

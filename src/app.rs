@@ -19,8 +19,11 @@ use wayland_client::{
     protocol::{wl_compositor, wl_keyboard, wl_pointer, wl_seat, wl_surface},
 };
 
-use crate::renderer::{GlassParams, Renderer};
+use crate::renderer::{BAR_H, GlassParams, ROW_H, Renderer};
 use crate::search::{Search, SearchResult};
+
+/// Max result rows shown (scroll comes later).
+const MAX_ROWS: usize = 8;
 
 // Current output: 3440x1440 @ scale 1.2 -> logical 2867x1200.
 // Layer Shell works in logical coordinates.
@@ -86,6 +89,19 @@ impl App {
                 }
                 self.running = false;
             }
+            Keysym::Up => {
+                if self.selected > 0 {
+                    self.selected -= 1;
+                    self.refresh();
+                }
+            }
+            Keysym::Down => {
+                let visible = self.results.len().min(MAX_ROWS);
+                if visible > 0 && self.selected + 1 < visible {
+                    self.selected += 1;
+                    self.refresh();
+                }
+            }
             Keysym::BackSpace => {
                 self.query.pop();
                 self.on_query_changed();
@@ -101,27 +117,60 @@ impl App {
         }
     }
 
-    /// Re-run the search and redraw after the query changed.
+    /// Re-run the search after the query changed, resize the panel and redraw.
     fn on_query_changed(&mut self) {
         self.results = self.search.query(&self.query);
         self.selected = 0;
-        match self.results.first() {
-            Some(top) => println!("top: {} (score {})", top.title, top.score),
-            None if !self.query.is_empty() => println!("(no match for {:?})", self.query),
-            None => {}
-        }
-        self.refresh();
+        self.sync_panel();
     }
 
-    /// Push the current query (or a placeholder) to the renderer and redraw.
+    /// Height the panel needs to show the current results (grows downward).
+    fn target_height(&self) -> i32 {
+        let rows = self.results.len().min(MAX_ROWS);
+        if rows == 0 {
+            BAR_H as i32
+        } else {
+            (BAR_H + rows as f32 * ROW_H + 16.0) as i32
+        }
+    }
+
+    /// Resize the panel to fit the results, or just redraw if the height is
+    /// unchanged. On resize the compositor's configure drives the redraw.
+    fn sync_panel(&mut self) {
+        let target = self.target_height();
+        if target != self.surface_height {
+            self.surface_height = target;
+            self.layer_surface
+                .set_size(self.surface_width as u32, target as u32);
+            self.layer_surface.commit();
+        } else {
+            self.refresh();
+        }
+    }
+
+    /// Push the current query + results to the renderer and redraw.
     fn refresh(&mut self) {
         let (text, placeholder) = if self.query.is_empty() {
             ("Search".to_string(), true)
         } else {
             (self.query.clone(), false)
         };
+        let titles: Vec<String> = self
+            .results
+            .iter()
+            .take(MAX_ROWS)
+            .map(|r| r.title.clone())
+            .collect();
+        let visible = titles.len();
+        let selection = if visible == 0 {
+            None
+        } else {
+            Some(self.selected.min(visible - 1))
+        };
         if let Some(renderer) = self.renderer.as_mut() {
             renderer.set_text(&text, placeholder);
+            renderer.set_results(&titles);
+            renderer.set_selection(selection);
             renderer.render();
         }
     }
@@ -170,6 +219,9 @@ impl LayerShellHandler for App {
         _serial: u32,
     ) {
         self.ensure_renderer(connection);
+        if let Some(renderer) = self.renderer.as_mut() {
+            renderer.resize(self.surface_width as u32, self.surface_height as u32);
+        }
         self.refresh();
     }
 }

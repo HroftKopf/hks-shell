@@ -23,6 +23,14 @@ const TEXT_TOP: f32 = 12.0;
 const FONT_SIZE: f32 = 20.0;
 const LINE_HEIGHT: f32 = 26.0;
 
+/// Search-bar height, and per-result row height. `pub` so the app sizes the
+/// panel to fit the result count using the same layout numbers.
+pub const BAR_H: f32 = 50.0;
+pub const ROW_H: f32 = 40.0;
+const RESULT_FONT: f32 = 17.0;
+const RESULT_LEFT: f32 = 22.0;
+const RESULTS_TOP: f32 = 58.0;
+
 /// Tunable glass appearance — the former `GlassStyle`, now feeding a GPU uniform.
 #[derive(Clone, Copy)]
 pub struct GlassParams {
@@ -66,15 +74,16 @@ struct Uniforms {
     base_alpha: f32,
     border_width: f32,
     highlight_strength: f32,
-    _pad0: f32,
-    _pad1: f32,
+    // Selected-row highlight band (sel_height <= 0 => no selection).
+    sel_top: f32,
+    sel_height: f32,
     _pad2: f32,
     tint: [f32; 3],
     _pad3: f32,
 }
 
 impl Uniforms {
-    fn new(params: &GlassParams, width: u32, height: u32) -> Self {
+    fn new(params: &GlassParams, width: u32, height: u32, sel_top: f32, sel_height: f32) -> Self {
         Self {
             resolution: [width as f32, height as f32],
             radius: params.radius,
@@ -84,8 +93,8 @@ impl Uniforms {
             base_alpha: params.base_alpha,
             border_width: params.border_width,
             highlight_strength: params.highlight_strength,
-            _pad0: 0.0,
-            _pad1: 0.0,
+            sel_top,
+            sel_height,
             _pad2: 0.0,
             tint: params.tint_rgb,
             _pad3: 0.0,
@@ -102,6 +111,8 @@ pub struct Renderer {
     uniform_buffer: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
     params: GlassParams,
+    sel_top: f32,
+    sel_height: f32,
 
     // Text rendering (glyphon).
     font_system: FontSystem,
@@ -110,6 +121,7 @@ pub struct Renderer {
     text_atlas: TextAtlas,
     text_renderer: TextRenderer,
     text_buffer: Buffer,
+    results_buffer: Buffer,
     text_color: TextColor,
 }
 
@@ -208,6 +220,9 @@ impl Renderer {
         let mut text_buffer = Buffer::new(&mut font_system, Metrics::new(FONT_SIZE, LINE_HEIGHT));
         text_buffer.set_size(Some(config.width as f32), Some(config.height as f32));
         text_buffer.shape_until_scroll(&mut font_system, false);
+        let mut results_buffer = Buffer::new(&mut font_system, Metrics::new(RESULT_FONT, ROW_H));
+        results_buffer.set_size(Some(config.width as f32), Some(config.height as f32));
+        results_buffer.shape_until_scroll(&mut font_system, false);
         let text_color = TextColor::rgb(55, 55, 65);
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -217,7 +232,7 @@ impl Renderer {
             ),
         });
 
-        let uniforms = Uniforms::new(&params, config.width, config.height);
+        let uniforms = Uniforms::new(&params, config.width, config.height, 0.0, 0.0);
         let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("glass uniforms"),
             size: std::mem::size_of::<Uniforms>() as u64,
@@ -291,6 +306,8 @@ impl Renderer {
             uniform_buffer,
             bind_group,
             params,
+            sel_top: 0.0,
+            sel_height: 0.0,
 
             font_system,
             swash_cache,
@@ -298,8 +315,22 @@ impl Renderer {
             text_atlas,
             text_renderer,
             text_buffer,
+            results_buffer,
             text_color,
         }
+    }
+
+    /// Set the result row titles (one per line).
+    pub fn set_results(&mut self, titles: &[String]) {
+        let text = titles.join("\n");
+        self.results_buffer.set_text(
+            &text,
+            &Attrs::new().family(Family::Name("Inter")),
+            Shaping::Advanced,
+            None,
+        );
+        self.results_buffer
+            .shape_until_scroll(&mut self.font_system, false);
     }
 
     /// Set the search-bar text (the query, or a dimmer placeholder when empty).
@@ -327,9 +358,36 @@ impl Renderer {
         self.config.width = width;
         self.config.height = height;
         self.surface.configure(&self.device, &self.config);
-        let uniforms = Uniforms::new(&self.params, width, height);
+        self.text_buffer
+            .set_size(Some(width as f32), Some(height as f32));
+        self.results_buffer
+            .set_size(Some(width as f32), Some(height as f32));
+        self.write_uniforms();
+    }
+
+    fn write_uniforms(&self) {
+        let uniforms = Uniforms::new(
+            &self.params,
+            self.config.width,
+            self.config.height,
+            self.sel_top,
+            self.sel_height,
+        );
         self.queue
             .write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
+    }
+
+    /// Set the highlighted result row (row 0 is the first row under the bar),
+    /// or clear the highlight with `None`.
+    pub fn set_selection(&mut self, selected: Option<usize>) {
+        match selected {
+            Some(i) => {
+                self.sel_top = RESULTS_TOP + i as f32 * ROW_H;
+                self.sel_height = ROW_H;
+            }
+            None => self.sel_height = 0.0,
+        }
+        self.write_uniforms();
     }
 
     pub fn render(&mut self) {
@@ -392,6 +450,21 @@ impl Renderer {
                             bottom: self.config.height as i32,
                         },
                         default_color: self.text_color,
+                        custom_glyphs: &[],
+                    },
+                    // Result rows below the bar.
+                    TextArea {
+                        buffer: &self.results_buffer,
+                        left: RESULT_LEFT,
+                        top: RESULTS_TOP,
+                        scale: 1.0,
+                        bounds: TextBounds {
+                            left: 0,
+                            top: 0,
+                            right: self.config.width as i32,
+                            bottom: self.config.height as i32,
+                        },
+                        default_color: TextColor::rgba(255, 255, 255, 235),
                         custom_glyphs: &[],
                     },
                 ],
