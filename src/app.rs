@@ -18,6 +18,9 @@ use wayland_client::{
     Connection, Dispatch, Proxy, QueueHandle,
     protocol::{wl_compositor, wl_keyboard, wl_pointer, wl_seat, wl_surface},
 };
+use wayland_protocols::wp::viewporter::client::{
+    wp_viewport::WpViewport, wp_viewporter::WpViewporter,
+};
 
 use crate::renderer::{BAR_H, GlassParams, ROW_H, Renderer};
 use crate::search::{Search, SearchResult};
@@ -35,6 +38,7 @@ pub struct App {
     pub seat_state: SeatState,
 
     pub layer_surface: LayerSurface,
+    pub viewport: WpViewport,
     pub pointer: Option<wl_pointer::WlPointer>,
     pub keyboard: Option<wl_keyboard::WlKeyboard>,
 
@@ -224,6 +228,10 @@ impl LayerShellHandler for App {
         if let Some(renderer) = self.renderer.as_mut() {
             renderer.resize(self.surface_width as u32, self.surface_height as u32);
         }
+        // Update the viewport destination together with the resized buffer (the
+        // render below commits both atomically), avoiding a stretched frame.
+        self.viewport
+            .set_destination(self.surface_width, self.surface_height);
         self.refresh();
     }
 }
@@ -420,6 +428,30 @@ impl KeyboardHandler for App {
         _modifiers: Modifiers,
         _raw_modifiers: RawModifiers,
         _layout: u32,
+    ) {
+    }
+}
+
+impl Dispatch<WpViewporter, ()> for App {
+    fn event(
+        _state: &mut Self,
+        _proxy: &WpViewporter,
+        _event: <WpViewporter as Proxy>::Event,
+        _data: &(),
+        _connection: &Connection,
+        _queue_handle: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<WpViewport, ()> for App {
+    fn event(
+        _state: &mut Self,
+        _proxy: &WpViewport,
+        _event: <WpViewport as Proxy>::Event,
+        _data: &(),
+        _connection: &Connection,
+        _queue_handle: &QueueHandle<Self>,
     ) {
     }
 }

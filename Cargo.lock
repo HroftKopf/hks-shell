@@ -632,6 +632,7 @@ dependencies = [
  "resvg",
  "smithay-client-toolkit",
  "wayland-client",
+ "wayland-protocols",
  "wgpu",
 ]
 

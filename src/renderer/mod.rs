@@ -31,6 +31,16 @@ const LINE_HEIGHT: f32 = 26.0;
 
 /// Search-bar height, and per-result row height. `pub` so the app sizes the
 /// panel to fit the result count using the same layout numbers.
+/// Output scale we render at. The buffer is rendered at RENDER_SCALE× the
+/// logical size (physical resolution) and a wp_viewport maps it back to the
+/// logical size, so the fractional-scale output shows a crisp 1:1 image.
+pub const RENDER_SCALE: f32 = 1.2;
+
+/// Logical px -> physical (buffer) px.
+fn physical(logical: u32) -> u32 {
+    ((logical as f32) * RENDER_SCALE).round().max(1.0) as u32
+}
+
 pub const BAR_H: f32 = 50.0;
 pub const ROW_H: f32 = 48.0;
 const RESULT_FONT: f32 = 15.0;
@@ -62,14 +72,16 @@ impl Default for GlassParams {
             radius: 25.0,
             edge_feather: 3.5,
             material_fade_width: 20.0,
-            edge_alpha_scale: 0.18,
+            // Keep the darkening nearly uniform to the edge (higher = less of a
+            // light rim where the bright frost would otherwise show through).
+            edge_alpha_scale: 0.7,
             // Rei's idea: darken the backdrop (frost * ~0.8) instead of a grey
             // fill. A near-black tint at this alpha is an alpha-over multiply,
             // so refraction stays visible — just dimmed — giving contrast for
             // white content on any background.
             base_alpha: 0.30,
             border_width: 10.0,
-            highlight_strength: 0.06,
+            highlight_strength: 0.03,
             tint_rgb: [0.02, 0.02, 0.04],
         }
     }
@@ -223,7 +235,7 @@ impl Renderer {
             .unwrap_or(caps.alpha_modes[0]);
 
         let mut config = surface
-            .get_default_config(&adapter, width.max(1), height.max(1))
+            .get_default_config(&adapter, physical(width), physical(height))
             .expect("surface not supported by adapter");
         config.usage = wgpu::TextureUsages::RENDER_ATTACHMENT;
         config.format = format;
@@ -431,8 +443,8 @@ impl Renderer {
         if width == 0 || height == 0 {
             return;
         }
-        self.config.width = width;
-        self.config.height = height;
+        self.config.width = physical(width);
+        self.config.height = physical(height);
         self.surface.configure(&self.device, &self.config);
         self.text_buffer
             .set_size(Some(width as f32), Some(height as f32));
@@ -509,7 +521,7 @@ impl Renderer {
                         buffer: &self.text_buffer,
                         left: TEXT_LEFT,
                         top: TEXT_TOP + 1.5,
-                        scale: 1.0,
+                        scale: RENDER_SCALE,
                         bounds: TextBounds {
                             left: 0,
                             top: 0,
@@ -524,7 +536,7 @@ impl Renderer {
                         buffer: &self.text_buffer,
                         left: TEXT_LEFT,
                         top: TEXT_TOP,
-                        scale: 1.0,
+                        scale: RENDER_SCALE,
                         bounds: TextBounds {
                             left: 0,
                             top: 0,
@@ -539,7 +551,7 @@ impl Renderer {
                         buffer: &self.results_buffer,
                         left: RESULT_LEFT,
                         top: RESULTS_TOP + NAME_DY,
-                        scale: 1.0,
+                        scale: RENDER_SCALE,
                         bounds: TextBounds {
                             left: 0,
                             top: 0,
@@ -555,7 +567,7 @@ impl Renderer {
                         buffer: &self.icon_anchor,
                         left: 0.0,
                         top: 0.0,
-                        scale: 1.0,
+                        scale: RENDER_SCALE,
                         bounds: TextBounds {
                             left: 0,
                             top: 0,

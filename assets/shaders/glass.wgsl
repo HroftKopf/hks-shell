@@ -54,8 +54,10 @@ fn sd_segment(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>) -> f32 {
 
 @fragment
 fn fs_main(@builtin(position) frag: vec4<f32>) -> @location(0) vec4<f32> {
-    let res = u.resolution;
-    let p = frag.xy;
+    // Buffer is rendered at 1.2x (physical); work in logical px so the layout
+    // constants stay 1:1 while AA is computed at full physical density.
+    let res = u.resolution / 1.2;
+    let p = frag.xy / 1.2;
     let half = res * 0.5;
     let r = clamp(u.radius, 1.0, min(half.x, half.y) - 0.5);
 
@@ -99,7 +101,7 @@ fn fs_main(@builtin(position) frag: vec4<f32>) -> @location(0) vec4<f32> {
         let inset_x = 10.0;
         let hl_center = vec2<f32>(res.x * 0.5, u.sel_top + u.sel_height * 0.5);
         let hl_half = vec2<f32>(res.x * 0.5 - inset_x, u.sel_height * 0.5 - 3.0);
-        let hl_d = sd_round_rect(p - hl_center, hl_half, 10.0);
+        let hl_d = sd_round_rect(p - hl_center, hl_half, 14.0);
         let hl_cov = (1.0 - smootherstep(-0.75, 0.75, hl_d)) * coverage;
         rgb = mix(rgb, vec3<f32>(0.34, 0.60, 1.0), hl_cov * 0.60);
         a = max(a, hl_cov * 0.52);
@@ -115,7 +117,7 @@ fn fs_main(@builtin(position) frag: vec4<f32>) -> @location(0) vec4<f32> {
             let tile_center = vec2<f32>(36.5, row_top + 24.0);
             let td = sd_round_rect(p - tile_center, vec2<f32>(16.5, 16.5), 9.0);
             let tcov = (1.0 - smootherstep(-1.0, 1.0, td)) * coverage;
-            rgb = mix(rgb, vec3<f32>(0.42, 0.42, 0.46), tcov * 0.85);
+            rgb = mix(rgb, vec3<f32>(0.90, 0.90, 0.92), tcov * 0.85);
             a = max(a, tcov * 0.85);
         }
     }

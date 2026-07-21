@@ -15,4 +15,5 @@ raw-window-handle = "0.6.2"
 resvg = "0.47.0"
 smithay-client-toolkit = { version = "0.20.0", default-features = false, features = ["xkbcommon"] }
 wayland-client = { version = "0.31.14", features = ["system"] }
+wayland-protocols = { version = "0.32.13", features = ["client"] }
 wgpu = "30.0.0"

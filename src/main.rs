@@ -13,6 +13,7 @@ use smithay_client_toolkit::{
 use wayland_client::{
     Connection, globals::registry_queue_init, protocol::wl_compositor,
 };
+use wayland_protocols::wp::viewporter::client::wp_viewporter::WpViewporter;
 
 use app::{App, OUTPUT_HEIGHT, OUTPUT_WIDTH};
 
@@ -47,11 +48,21 @@ fn main() {
         None,
     );
 
+    // wp_viewport: the buffer is rendered at physical (1.2x) resolution; the
+    // viewport maps it back to the logical surface size so the fractional-scale
+    // output shows a crisp 1:1 image instead of upscaling a soft one.
+    let viewporter: WpViewporter = globals
+        .bind(&queue_handle, 1..=1, ())
+        .expect("wp_viewporter not available");
+    let viewport = viewporter.get_viewport(layer_surface.wl_surface(), &queue_handle, ());
+    viewport.set_destination(SURFACE_WIDTH, SURFACE_HEIGHT);
+
     let mut app = App {
         registry_state,
         seat_state,
 
         layer_surface,
+        viewport,
         pointer: None,
         keyboard: None,
 
