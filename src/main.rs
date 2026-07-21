@@ -426,14 +426,6 @@ impl PointerHandler for App {
                 let delta_x = pointer_x - self.grab_position.0;
                 let delta_y = pointer_y - self.grab_position.1;
 
-                // grab_position раньше выставлялся только в Press и больше
-                // никогда не обновлялся. delta каждый раз считалась от точки
-                // первоначального нажатия, хотя pointer-координаты приходят
-                // surface-local и "уезжают" вместе с самой поверхностью при
-                // каждом set_margin — это давало дрейф/ускорение при драге.
-                // Обновляем точку отсчёта на каждое обработанное Motion.
-                self.grab_position = (pointer_x, pointer_y);
-
                 if delta_x.abs() >= 0.5 || delta_y.abs() >= 0.5 {
                     let max_left = (OUTPUT_WIDTH - self.surface_width).max(0);
                     let max_top = (OUTPUT_HEIGHT - self.surface_height).max(0);
@@ -449,6 +441,15 @@ impl PointerHandler for App {
 
                     // Буфер менять не нужно: двигается вся Layer Shell-поверхность.
                     self.layer_surface.commit();
+
+                    // grab_position обновляем ТОЛЬКО когда реально сдвинули
+                    // поверхность. Раньше он обновлялся на каждое Motion, и
+                    // под-пороговые сдвиги (<0.5px при медленном драге) молча
+                    // терялись: точка отсчёта уезжала за курсором, а поверхность
+                    // не двигалась — накапливалось отставание. Теперь мелкие
+                    // движения копятся относительно фиксированной точки, пока
+                    // не превысят порог, и применяются без потерь.
+                    self.grab_position = (pointer_x, pointer_y);
                 }
             }
         }
@@ -481,15 +482,15 @@ delegate_layer!(App);
 
 fn main() {
     let style = GlassStyle {
-        width: 300,
-        height: 300,
+        width: 400,
+        height: 200,
 
         // ВАЖНО: синхронизируй с geometry-corner-radius в config.kdl
         // для layer-rule namespace="^hks-shell$". Композитор режет свой
         // эффект по КРУГУ этого радиуса; если буфер клиента рисует форму
         // крупнее/иначе — за кругом остаётся плоский материал клиента без
         // блюра/рефракции (был квадратный ореол вокруг круга).
-        radius: 140.0,
+        radius: 40.0,
 
         // 2.0 = чистый круглый угол (евклидов), совпадает с обрезкой
         // композитора. Выше 2.0 даёт squircle, который вылезает за круг
@@ -497,7 +498,7 @@ fn main() {
         // композитор не научится резать по squircle.
         corner_power: 2.0,
         edge_feather: 3.5,
-        material_fade_width: 22.0,
+        material_fade_width: 20.0,
         edge_alpha_scale: 0.18,
 
         tint_rgb: [0.93, 0.96, 1.0],
