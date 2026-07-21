@@ -12,6 +12,17 @@ use raw_window_handle::{
     RawDisplayHandle, RawWindowHandle, WaylandDisplayHandle, WaylandWindowHandle,
 };
 
+use glyphon::{
+    Attrs, Buffer, Cache as GlyphonCache, Color as TextColor, Family, FontSystem, Metrics,
+    Resolution, Shaping, SwashCache, TextArea, TextAtlas, TextBounds, TextRenderer, Viewport,
+};
+
+// Search-bar text layout (logical px).
+const TEXT_LEFT: f32 = 46.0;
+const TEXT_TOP: f32 = 12.0;
+const FONT_SIZE: f32 = 20.0;
+const LINE_HEIGHT: f32 = 26.0;
+
 /// Tunable glass appearance — the former `GlassStyle`, now feeding a GPU uniform.
 #[derive(Clone, Copy)]
 pub struct GlassParams {
@@ -27,16 +38,19 @@ pub struct GlassParams {
 
 impl Default for GlassParams {
     fn default() -> Self {
-        // Mirrors the previous SHM prototype values.
         Self {
             radius: 25.0,
             edge_feather: 3.5,
             material_fade_width: 20.0,
             edge_alpha_scale: 0.18,
-            base_alpha: 0.035,
+            // Rei's idea: darken the backdrop (frost * ~0.8) instead of a grey
+            // fill. A near-black tint at this alpha is an alpha-over multiply,
+            // so refraction stays visible — just dimmed — giving contrast for
+            // white content on any background.
+            base_alpha: 0.22,
             border_width: 10.0,
             highlight_strength: 0.06,
-            tint_rgb: [0.93, 0.96, 1.0],
+            tint_rgb: [0.02, 0.02, 0.04],
         }
     }
 }
@@ -88,6 +102,15 @@ pub struct Renderer {
     uniform_buffer: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
     params: GlassParams,
+
+    // Text rendering (glyphon).
+    font_system: FontSystem,
+    swash_cache: SwashCache,
+    viewport: Viewport,
+    text_atlas: TextAtlas,
+    text_renderer: TextRenderer,
+    text_buffer: Buffer,
+    text_color: TextColor,
 }
 
 impl Renderer {
@@ -170,6 +193,23 @@ impl Renderer {
         config.present_mode = wgpu::PresentMode::Fifo;
         surface.configure(&device, &config);
 
+        // Text rendering setup (glyphon). Bundle Inter so the shell looks the
+        // same regardless of what fonts the system has installed.
+        let mut font_system = FontSystem::new();
+        font_system
+            .db_mut()
+            .load_font_data(include_bytes!("../../assets/fonts/Inter-Bold.ttf").to_vec());
+        let swash_cache = SwashCache::new();
+        let glyphon_cache = GlyphonCache::new(&device);
+        let viewport = Viewport::new(&device, &glyphon_cache);
+        let mut text_atlas = TextAtlas::new(&device, &queue, &glyphon_cache, format);
+        let text_renderer =
+            TextRenderer::new(&mut text_atlas, &device, wgpu::MultisampleState::default(), None);
+        let mut text_buffer = Buffer::new(&mut font_system, Metrics::new(FONT_SIZE, LINE_HEIGHT));
+        text_buffer.set_size(Some(config.width as f32), Some(config.height as f32));
+        text_buffer.shape_until_scroll(&mut font_system, false);
+        let text_color = TextColor::rgb(55, 55, 65);
+
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("glass shader"),
             source: wgpu::ShaderSource::Wgsl(
@@ -251,7 +291,33 @@ impl Renderer {
             uniform_buffer,
             bind_group,
             params,
+
+            font_system,
+            swash_cache,
+            viewport,
+            text_atlas,
+            text_renderer,
+            text_buffer,
+            text_color,
         }
+    }
+
+    /// Set the search-bar text (the query, or a dimmer placeholder when empty).
+    pub fn set_text(&mut self, text: &str, placeholder: bool) {
+        // White content over the darkened backdrop.
+        self.text_color = if placeholder {
+            TextColor::rgba(255, 255, 255, 180)
+        } else {
+            TextColor::rgba(255, 255, 255, 255)
+        };
+        self.text_buffer.set_text(
+            text,
+            &Attrs::new().family(Family::Name("Inter")),
+            Shaping::Advanced,
+            None,
+        );
+        self.text_buffer
+            .shape_until_scroll(&mut self.font_system, false);
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
@@ -282,6 +348,57 @@ impl Renderer {
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
+        // Prepare text for this frame.
+        self.viewport.update(
+            &self.queue,
+            Resolution {
+                width: self.config.width,
+                height: self.config.height,
+            },
+        );
+        self.text_renderer
+            .prepare(
+                &self.device,
+                &self.queue,
+                &mut self.font_system,
+                &mut self.text_atlas,
+                &self.viewport,
+                [
+                    // Soft drop shadow: same text, dark, offset down.
+                    TextArea {
+                        buffer: &self.text_buffer,
+                        left: TEXT_LEFT,
+                        top: TEXT_TOP + 1.5,
+                        scale: 1.0,
+                        bounds: TextBounds {
+                            left: 0,
+                            top: 0,
+                            right: self.config.width as i32,
+                            bottom: self.config.height as i32,
+                        },
+                        default_color: TextColor::rgba(0, 0, 0, 90),
+                        custom_glyphs: &[],
+                    },
+                    // Main text on top.
+                    TextArea {
+                        buffer: &self.text_buffer,
+                        left: TEXT_LEFT,
+                        top: TEXT_TOP,
+                        scale: 1.0,
+                        bounds: TextBounds {
+                            left: 0,
+                            top: 0,
+                            right: self.config.width as i32,
+                            bottom: self.config.height as i32,
+                        },
+                        default_color: self.text_color,
+                        custom_glyphs: &[],
+                    },
+                ],
+                &mut self.swash_cache,
+            )
+            .expect("text prepare failed");
+
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -308,9 +425,15 @@ impl Renderer {
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &self.bind_group, &[]);
             pass.draw(0..3, 0..1);
+
+            // Text on top of the glass, same pass.
+            self.text_renderer
+                .render(&self.text_atlas, &self.viewport, &mut pass)
+                .expect("text render failed");
         }
 
         self.queue.submit(Some(encoder.finish()));
         self.queue.present(frame);
+        self.text_atlas.trim();
     }
 }

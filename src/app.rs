@@ -77,16 +77,29 @@ impl App {
             }
             Keysym::BackSpace => {
                 self.query.pop();
-                println!("query: {:?}", self.query);
+                self.refresh();
             }
             _ => {
                 if let Some(text) = &event.utf8 {
                     if !text.is_empty() && !text.chars().any(char::is_control) {
                         self.query.push_str(text);
-                        println!("query: {:?}", self.query);
+                        self.refresh();
                     }
                 }
             }
+        }
+    }
+
+    /// Push the current query (or a placeholder) to the renderer and redraw.
+    fn refresh(&mut self) {
+        let (text, placeholder) = if self.query.is_empty() {
+            ("Search".to_string(), true)
+        } else {
+            (self.query.clone(), false)
+        };
+        if let Some(renderer) = self.renderer.as_mut() {
+            renderer.set_text(&text, placeholder);
+            renderer.render();
         }
     }
 }
@@ -134,9 +147,7 @@ impl LayerShellHandler for App {
         _serial: u32,
     ) {
         self.ensure_renderer(connection);
-        if let Some(renderer) = self.renderer.as_mut() {
-            renderer.render();
-        }
+        self.refresh();
     }
 }
 

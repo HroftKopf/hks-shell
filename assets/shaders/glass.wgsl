@@ -44,6 +44,14 @@ fn sd_round_rect(p: vec2<f32>, half: vec2<f32>, r: f32) -> f32 {
     return min(max(q.x, q.y), 0.0) + length(max(q, vec2<f32>(0.0, 0.0))) - r;
 }
 
+// Signed distance to a line segment a-b.
+fn sd_segment(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>) -> f32 {
+    let pa = p - a;
+    let ba = b - a;
+    let h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
+    return length(pa - ba * h);
+}
+
 @fragment
 fn fs_main(@builtin(position) frag: vec4<f32>) -> @location(0) vec4<f32> {
     let res = u.resolution;
@@ -72,7 +80,18 @@ fn fs_main(@builtin(position) frag: vec4<f32>) -> @location(0) vec4<f32> {
     var rgb = u.tint;
     rgb = rgb + (vec3<f32>(1.0, 1.0, 1.0) - rgb) * border_highlight;
 
-    let a = clamp(u.base_alpha * edge_material_scale + border_highlight * 0.12, 0.0, 0.65);
+    var a = clamp(u.base_alpha * edge_material_scale + border_highlight * 0.12, 0.0, 0.65);
+
+    // Magnifier icon on the left: a ring plus a diagonal handle, drawn in grey.
+    let icon_center = vec2<f32>(23.0, res.y * 0.5);
+    let ip = p - icon_center;
+    let ring = abs(length(ip) - 6.5) - 1.4;
+    let handle = sd_segment(ip, vec2<f32>(4.6, 4.6), vec2<f32>(10.4, 10.4)) - 1.6;
+    let icon_d = min(ring, handle);
+    let icon_cov = (1.0 - smootherstep(-0.75, 0.75, icon_d)) * coverage;
+    rgb = mix(rgb, vec3<f32>(0.95, 0.95, 0.98), icon_cov);
+    a = max(a, icon_cov * 0.92);
+
     let final_alpha = a * coverage;
 
     // Premultiplied output.
