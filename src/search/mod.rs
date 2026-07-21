@@ -11,6 +11,8 @@ pub use desktop::DesktopAppProvider;
 pub struct SearchResult {
     pub title: String,
     pub subtitle: Option<String>,
+    /// Freedesktop icon name (or absolute path) for the row icon.
+    pub icon: Option<String>,
     /// Higher = better match.
     pub score: i64,
     pub action: Action,

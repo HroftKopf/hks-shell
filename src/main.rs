@@ -16,7 +16,7 @@ use wayland_client::{
 
 use app::{App, OUTPUT_HEIGHT, OUTPUT_WIDTH};
 
-const SURFACE_WIDTH: i32 = 300;
+const SURFACE_WIDTH: i32 = 580;
 const SURFACE_HEIGHT: i32 = 50;
 
 fn main() {

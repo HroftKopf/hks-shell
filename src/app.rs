@@ -23,7 +23,7 @@ use crate::renderer::{BAR_H, GlassParams, ROW_H, Renderer};
 use crate::search::{Search, SearchResult};
 
 /// Max result rows shown (scroll comes later).
-const MAX_ROWS: usize = 8;
+const MAX_ROWS: usize = 10;
 
 // Current output: 3440x1440 @ scale 1.2 -> logical 2867x1200.
 // Layer Shell works in logical coordinates.
@@ -155,12 +155,14 @@ impl App {
         } else {
             (self.query.clone(), false)
         };
-        let titles: Vec<String> = self
-            .results
-            .iter()
-            .take(MAX_ROWS)
-            .map(|r| r.title.clone())
-            .collect();
+        let mut titles = Vec::new();
+        let mut subtitles = Vec::new();
+        let mut icons = Vec::new();
+        for result in self.results.iter().take(MAX_ROWS) {
+            titles.push(result.title.clone());
+            subtitles.push(result.subtitle.clone().unwrap_or_default());
+            icons.push(result.icon.clone());
+        }
         let visible = titles.len();
         let selection = if visible == 0 {
             None
@@ -169,7 +171,7 @@ impl App {
         };
         if let Some(renderer) = self.renderer.as_mut() {
             renderer.set_text(&text, placeholder);
-            renderer.set_results(&titles);
+            renderer.set_results(&titles, &subtitles, &icons);
             renderer.set_selection(selection);
             renderer.render();
         }

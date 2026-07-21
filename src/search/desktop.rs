@@ -9,6 +9,8 @@ use super::{Action, SearchProvider, SearchResult};
 
 struct AppEntry {
     name: String,
+    subtitle: Option<String>,
+    icon: Option<String>,
     program: String,
     args: Vec<String>,
 }
@@ -41,8 +43,15 @@ impl DesktopAppProvider {
                 continue;
             };
 
+            let subtitle = entry
+                .comment(&locales)
+                .or_else(|| entry.generic_name(&locales))
+                .map(|c| c.into_owned());
+
             apps.push(AppEntry {
                 name: name.into_owned(),
+                subtitle,
+                icon: entry.icon().map(str::to_string),
                 program: program.to_string(),
                 args: tokens.map(str::to_string).collect(),
             });
@@ -68,7 +77,8 @@ impl SearchProvider for DesktopAppProvider {
                     .fuzzy_match(&app.name, query)
                     .map(|score| SearchResult {
                         title: app.name.clone(),
-                        subtitle: None,
+                        subtitle: app.subtitle.clone(),
+                        icon: app.icon.clone(),
                         score,
                         action: Action::Launch {
                             program: app.program.clone(),

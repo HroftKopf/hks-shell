@@ -6,10 +6,13 @@ edition = "2024"
 [dependencies]
 bytemuck = { version = "1.25.2", features = ["derive"] }
 freedesktop-desktop-entry = "0.8.1"
+freedesktop-icons = "0.4.0"
 fuzzy-matcher = "0.3.7"
 glyphon = "0.12.0"
+image = { version = "0.25.10", default-features = false, features = ["png"] }
 pollster = "1.0.1"
 raw-window-handle = "0.6.2"
+resvg = "0.47.0"
 smithay-client-toolkit = { version = "0.20.0", default-features = false, features = ["xkbcommon"] }
 wayland-client = { version = "0.31.14", features = ["system"] }
 wgpu = "30.0.0"
