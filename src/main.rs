@@ -72,16 +72,14 @@ fn main() {
         keyboard: None,
 
         query: String::new(),
-        cursor_on: true,
+        caret_clock: Instant::now(),
 
         search: search::Search::new(),
         results: Vec::new(),
         selected: 0,
+        scroll: 0,
 
         renderer: None,
-
-        dragging: false,
-        grab_position: (0.0, 0.0),
 
         position_top: initial_top,
         position_left: initial_left,
@@ -106,9 +104,9 @@ fn main() {
     app.layer_surface.commit();
 
     // Event loop with a caret-blink timer: poll the Wayland fd with a timeout,
-    // toggling the caret whenever the blink interval elapses.
-    let blink = Duration::from_millis(530);
-    let mut last_blink = Instant::now();
+    // ticking the caret fade at ~25 fps while idle.
+    let frame = Duration::from_millis(40);
+    let mut last_frame = Instant::now();
 
     while app.running {
         let _ = connection.flush();
@@ -123,7 +121,7 @@ fn main() {
             continue;
         };
 
-        let remaining = blink.saturating_sub(last_blink.elapsed());
+        let remaining = frame.saturating_sub(last_frame.elapsed());
         let timeout = Timespec {
             tv_sec: remaining.as_secs() as _,
             tv_nsec: remaining.subsec_nanos() as _,
@@ -141,9 +139,9 @@ fn main() {
             .dispatch_pending(&mut app)
             .expect("Wayland event dispatch error");
 
-        if last_blink.elapsed() >= blink {
-            last_blink = Instant::now();
-            app.toggle_cursor();
+        if last_frame.elapsed() >= frame {
+            last_frame = Instant::now();
+            app.update_caret();
         }
     }
 }

@@ -46,7 +46,7 @@ pub const ROW_H: f32 = 48.0;
 const RESULT_FONT: f32 = 15.0;
 const SUB_FONT: f32 = 13.0;
 const RESULT_LEFT: f32 = 68.0; // text start (leaves room for the icon)
-const RESULTS_TOP: f32 = 58.0;
+pub const RESULTS_TOP: f32 = 58.0;
 // cosmic-text centers the line within ROW_H; small nudge for font-metric bias.
 const NAME_DY: f32 = 3.0;
 const ICON_LEFT: f32 = 20.0;
@@ -104,6 +104,10 @@ struct Uniforms {
     row_count: f32,
     tint: [f32; 3],
     caret_x: f32,
+    scrollbar_top: f32,
+    scrollbar_height: f32,
+    caret_alpha: f32,
+    _pad5: f32,
 }
 
 impl Uniforms {
@@ -116,6 +120,9 @@ impl Uniforms {
         sel_height: f32,
         row_count: f32,
         caret_x: f32,
+        caret_alpha: f32,
+        scrollbar_top: f32,
+        scrollbar_height: f32,
     ) -> Self {
         Self {
             resolution: [width as f32, height as f32],
@@ -131,6 +138,10 @@ impl Uniforms {
             row_count,
             tint: params.tint_rgb,
             caret_x,
+            scrollbar_top,
+            scrollbar_height,
+            caret_alpha,
+            _pad5: 0.0,
         }
     }
 }
@@ -148,7 +159,9 @@ pub struct Renderer {
     sel_height: f32,
     row_count: f32,
     caret_base_x: f32,
-    caret_on: bool,
+    caret_alpha: f32,
+    scrollbar_top: f32,
+    scrollbar_height: f32,
 
     // Text rendering (glyphon).
     font_system: FontSystem,
@@ -281,7 +294,18 @@ impl Renderer {
             ),
         });
 
-        let uniforms = Uniforms::new(&params, config.width, config.height, 0.0, 0.0, 0.0, -1.0);
+        let uniforms = Uniforms::new(
+            &params,
+            config.width,
+            config.height,
+            0.0,
+            0.0,
+            0.0,
+            -1.0,
+            1.0,
+            0.0,
+            0.0,
+        );
         let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("glass uniforms"),
             size: std::mem::size_of::<Uniforms>() as u64,
@@ -359,7 +383,9 @@ impl Renderer {
             sel_height: 0.0,
             row_count: 0.0,
             caret_base_x: TEXT_LEFT,
-            caret_on: false,
+            caret_alpha: 1.0,
+            scrollbar_top: 0.0,
+            scrollbar_height: 0.0,
 
             font_system,
             swash_cache,
@@ -444,16 +470,19 @@ impl Renderer {
         self.text_buffer
             .shape_until_scroll(&mut self.font_system, false);
 
-        // Hide the caret while the placeholder shows; place it after the query.
+        // glyphon treats TextArea.left as PHYSICAL px (it doesn't scale `left`),
+        // so the text sits at TEXT_LEFT / RENDER_SCALE in the shader's logical
+        // space. Match the caret to that, otherwise it drifts right by the scale.
+        let left = TEXT_LEFT / RENDER_SCALE;
         self.caret_base_x = if placeholder {
-            -1.0
+            left - 2.0
         } else {
             let w = self
                 .text_buffer
                 .layout_runs()
                 .map(|run| run.line_w)
                 .fold(0.0_f32, f32::max);
-            TEXT_LEFT + w + 1.0
+            left + w - 1.0
         };
     }
 
@@ -476,7 +505,6 @@ impl Renderer {
     }
 
     fn write_uniforms(&self) {
-        let caret_x = if self.caret_on { self.caret_base_x } else { -1.0 };
         let uniforms = Uniforms::new(
             &self.params,
             self.config.width,
@@ -484,15 +512,25 @@ impl Renderer {
             self.sel_top,
             self.sel_height,
             self.row_count,
-            caret_x,
+            self.caret_base_x,
+            self.caret_alpha,
+            self.scrollbar_top,
+            self.scrollbar_height,
         );
         self.queue
             .write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
     }
 
-    /// Show/hide the text caret (blink).
-    pub fn set_caret(&mut self, on: bool) {
-        self.caret_on = on;
+    /// Set the caret opacity (0..1) for the smooth blink.
+    pub fn set_caret_alpha(&mut self, alpha: f32) {
+        self.caret_alpha = alpha;
+        self.write_uniforms();
+    }
+
+    /// Set the scrollbar thumb geometry (logical px); height <= 0 hides it.
+    pub fn set_scrollbar(&mut self, top: f32, height: f32) {
+        self.scrollbar_top = top;
+        self.scrollbar_height = height;
         self.write_uniforms();
     }
 

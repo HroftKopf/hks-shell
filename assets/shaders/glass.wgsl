@@ -18,6 +18,10 @@ struct Uniforms {
     row_count: f32,
     tint: vec3<f32>,
     caret_x: f32,
+    scrollbar_top: f32,
+    scrollbar_height: f32,
+    caret_alpha: f32,
+    _pad5: f32,
 };
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
@@ -95,10 +99,10 @@ fn fs_main(@builtin(position) frag: vec4<f32>) -> @location(0) vec4<f32> {
     rgb = mix(rgb, vec3<f32>(0.95, 0.95, 0.98), icon_cov);
     a = max(a, icon_cov * 0.92);
 
-    // Blinking text caret in the search bar (caret_x <= 0 = hidden).
+    // Text caret in the search bar; caret_alpha fades it for a smooth blink.
     if (u.caret_x > 0.5) {
         let cd = sd_round_rect(p - vec2<f32>(u.caret_x, 25.0), vec2<f32>(1.0, 11.0), 1.0);
-        let ccov = (1.0 - smootherstep(-0.75, 0.75, cd)) * coverage;
+        let ccov = (1.0 - smootherstep(-0.75, 0.75, cd)) * coverage * u.caret_alpha;
         rgb = mix(rgb, vec3<f32>(1.0, 1.0, 1.0), ccov);
         a = max(a, ccov);
     }
@@ -138,6 +142,25 @@ fn fs_main(@builtin(position) frag: vec4<f32>) -> @location(0) vec4<f32> {
             rgb = mix(rgb, vec3<f32>(1.0, 1.0, 1.0), dcov * 0.45);
             a = max(a, dcov * 0.45);
         }
+    }
+
+    // Scrollbar on the right edge: a faint full-height track plus a brighter
+    // rounded thumb (hidden when the list fits). RESULTS_TOP = 58.
+    if (u.scrollbar_height > 0.5) {
+        let sb_x = res.x - 9.0;
+        let track_top = 60.0;
+        let track_bot = res.y - 10.0;
+        let track_c = vec2<f32>(sb_x, (track_top + track_bot) * 0.5);
+        let track_d = sd_round_rect(p - track_c, vec2<f32>(1.5, (track_bot - track_top) * 0.5), 1.5);
+        let track_cov = (1.0 - smootherstep(-0.75, 0.75, track_d)) * coverage;
+        rgb = mix(rgb, vec3<f32>(1.0, 1.0, 1.0), track_cov * 0.07);
+        a = max(a, track_cov * 0.07);
+
+        let thumb_c = vec2<f32>(sb_x, u.scrollbar_top + u.scrollbar_height * 0.5);
+        let thumb_d = sd_round_rect(p - thumb_c, vec2<f32>(2.5, u.scrollbar_height * 0.5 - 1.0), 2.5);
+        let thumb_cov = (1.0 - smootherstep(-0.75, 0.75, thumb_d)) * coverage;
+        rgb = mix(rgb, vec3<f32>(1.0, 1.0, 1.0), thumb_cov * 0.5);
+        a = max(a, thumb_cov * 0.5);
     }
 
     let final_alpha = a * coverage;

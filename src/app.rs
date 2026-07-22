@@ -1,4 +1,5 @@
 use std::ffi::c_void;
+use std::time::{Duration, Instant};
 
 use smithay_client_toolkit::{
     delegate_keyboard, delegate_layer, delegate_pointer, delegate_registry, delegate_seat,
@@ -7,7 +8,7 @@ use smithay_client_toolkit::{
     seat::{
         Capability, SeatHandler, SeatState,
         keyboard::{KeyEvent, KeyboardHandler, Keysym, Modifiers, RawModifiers},
-        pointer::{BTN_LEFT, PointerEvent, PointerEventKind, PointerHandler},
+        pointer::{PointerEvent, PointerEventKind, PointerHandler},
     },
     shell::{
         WaylandSurface,
@@ -22,11 +23,25 @@ use wayland_protocols::wp::viewporter::client::{
     wp_viewport::WpViewport, wp_viewporter::WpViewporter,
 };
 
-use crate::renderer::{BAR_H, GlassParams, ROW_H, Renderer};
+use crate::renderer::{BAR_H, GlassParams, RESULTS_TOP, ROW_H, Renderer};
 use crate::search::{Search, SearchResult};
 
 /// Max result rows shown (scroll comes later).
 const MAX_ROWS: usize = 10;
+
+/// Smooth caret opacity (0..1): mostly solid, with one smooth dip to 0 per
+/// period (fade out, fade in, then hold solid before the next dip).
+fn caret_alpha(elapsed: Duration) -> f32 {
+    let period = 1.2_f32;
+    let x = (elapsed.as_secs_f32() / period).fract();
+    let dip = smoothstep(0.40, 0.50, x) - smoothstep(0.50, 0.60, x);
+    (1.0 - dip).clamp(0.0, 1.0)
+}
+
+fn smoothstep(a: f32, b: f32, x: f32) -> f32 {
+    let t = ((x - a) / (b - a)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
 
 // Current output: 3440x1440 @ scale 1.2 -> logical 2867x1200.
 // Layer Shell works in logical coordinates.
@@ -44,17 +59,16 @@ pub struct App {
 
     /// Current search query text.
     pub query: String,
-    /// Blinking caret visibility.
-    pub cursor_on: bool,
+    /// Reference time for the caret blink phase (reset on keystroke).
+    pub caret_clock: Instant,
 
     pub search: Search,
     pub results: Vec<SearchResult>,
     pub selected: usize,
+    /// Index of the first visible result row (scroll position).
+    pub scroll: usize,
 
     pub renderer: Option<Renderer>,
-
-    pub dragging: bool,
-    pub grab_position: (f64, f64),
 
     pub position_top: i32,
     pub position_left: i32,
@@ -98,13 +112,18 @@ impl App {
             Keysym::Up => {
                 if self.selected > 0 {
                     self.selected -= 1;
+                    if self.selected < self.scroll {
+                        self.scroll = self.selected;
+                    }
                     self.refresh();
                 }
             }
             Keysym::Down => {
-                let visible = self.results.len().min(MAX_ROWS);
-                if visible > 0 && self.selected + 1 < visible {
+                if self.selected + 1 < self.results.len() {
                     self.selected += 1;
+                    if self.selected >= self.scroll + MAX_ROWS {
+                        self.scroll = self.selected + 1 - MAX_ROWS;
+                    }
                     self.refresh();
                 }
             }
@@ -127,15 +146,16 @@ impl App {
     fn on_query_changed(&mut self) {
         self.results = self.search.query(&self.query);
         self.selected = 0;
-        self.cursor_on = true; // keep the caret solid right after typing
+        self.scroll = 0;
+        self.caret_clock = Instant::now(); // caret solid right after typing
         self.sync_panel();
     }
 
-    /// Flip the caret (called on the blink timer) and redraw.
-    pub fn toggle_cursor(&mut self) {
-        self.cursor_on = !self.cursor_on;
+    /// Update the caret opacity from the blink phase (called each frame tick).
+    pub fn update_caret(&mut self) {
+        let alpha = caret_alpha(self.caret_clock.elapsed());
         if let Some(renderer) = self.renderer.as_mut() {
-            renderer.set_caret(self.cursor_on);
+            renderer.set_caret_alpha(alpha);
             renderer.render();
         }
     }
@@ -171,26 +191,43 @@ impl App {
         } else {
             (self.query.clone(), false)
         };
+        let scroll_max = self.results.len().saturating_sub(MAX_ROWS);
+        self.scroll = self.scroll.min(scroll_max);
+        let scroll = self.scroll;
+
         let mut titles = Vec::new();
         let mut subtitles = Vec::new();
         let mut icons = Vec::new();
-        for result in self.results.iter().take(MAX_ROWS) {
+        for result in self.results.iter().skip(scroll).take(MAX_ROWS) {
             titles.push(result.title.clone());
             subtitles.push(result.subtitle.clone().unwrap_or_default());
             icons.push(result.icon.clone());
         }
         let visible = titles.len();
-        let selection = if visible == 0 {
-            None
+        let selection = if visible > 0 && self.selected >= scroll && self.selected < scroll + visible {
+            Some(self.selected - scroll)
         } else {
-            Some(self.selected.min(visible - 1))
+            None
         };
-        let cursor_on = self.cursor_on;
+        // Scrollbar thumb geometry (logical px); hidden when everything fits.
+        let total = self.results.len();
+        let (sb_top, sb_h) = if total > MAX_ROWS {
+            let track_top = RESULTS_TOP;
+            let track_h = ((self.surface_height as f32 - 8.0) - track_top).max(1.0);
+            let thumb_h = (MAX_ROWS as f32 / total as f32 * track_h).max(24.0);
+            let frac = (scroll as f32 / (total - MAX_ROWS) as f32).clamp(0.0, 1.0);
+            (track_top + frac * (track_h - thumb_h), thumb_h)
+        } else {
+            (0.0, 0.0)
+        };
+
+        let caret = caret_alpha(self.caret_clock.elapsed());
         if let Some(renderer) = self.renderer.as_mut() {
             renderer.set_text(&text, placeholder);
             renderer.set_results(&titles, &subtitles, &icons);
             renderer.set_selection(selection);
-            renderer.set_caret(cursor_on);
+            renderer.set_caret_alpha(caret);
+            renderer.set_scrollbar(sb_top, sb_h);
             renderer.render();
         }
     }
@@ -297,7 +334,6 @@ impl SeatHandler for App {
             if let Some(pointer) = self.pointer.take() {
                 pointer.release();
             }
-            self.dragging = false;
         }
         if capability == Capability::Keyboard {
             if let Some(keyboard) = self.keyboard.take() {
@@ -323,57 +359,34 @@ impl PointerHandler for App {
         _pointer: &wl_pointer::WlPointer,
         events: &[PointerEvent],
     ) {
-        let mut latest_motion = None;
-        let mut left_button_released = false;
+        let mut scroll_delta: i32 = 0;
 
         for event in events {
             if &event.surface != self.layer_surface.wl_surface() {
                 continue;
             }
 
-            match &event.kind {
-                PointerEventKind::Press { button, .. } if *button == BTN_LEFT => {
-                    self.dragging = true;
-                    self.grab_position = event.position;
-                }
-                PointerEventKind::Motion { .. } if self.dragging => {
-                    latest_motion = Some(event.position);
-                }
-                PointerEventKind::Release { button, .. } if *button == BTN_LEFT => {
-                    left_button_released = true;
-                }
-                _ => {}
+            if let PointerEventKind::Axis { vertical, .. } = &event.kind {
+                // value120 is the modern high-res field (deprecated `discrete`
+                // is 0 on niri); fall back to the pixel amount.
+                let step = if vertical.value120 != 0 {
+                    vertical.value120.signum()
+                } else if vertical.discrete != 0 {
+                    vertical.discrete.signum()
+                } else if vertical.absolute > 0.5 {
+                    1
+                } else if vertical.absolute < -0.5 {
+                    -1
+                } else {
+                    0
+                };
+                scroll_delta += step * 3; // rows per notch
             }
         }
 
-        if self.dragging {
-            if let Some((pointer_x, pointer_y)) = latest_motion {
-                let delta_x = pointer_x - self.grab_position.0;
-                let delta_y = pointer_y - self.grab_position.1;
-
-                if delta_x.abs() >= 0.5 || delta_y.abs() >= 0.5 {
-                    let max_left = (OUTPUT_WIDTH - self.surface_width).max(0);
-                    let max_top = (OUTPUT_HEIGHT - self.surface_height).max(0);
-
-                    self.position_left = (self.position_left as f64 + delta_x).round() as i32;
-                    self.position_top = (self.position_top as f64 + delta_y).round() as i32;
-
-                    self.position_left = self.position_left.clamp(0, max_left);
-                    self.position_top = self.position_top.clamp(0, max_top);
-
-                    self.layer_surface
-                        .set_margin(self.position_top, 0, 0, self.position_left);
-                    self.layer_surface.commit();
-
-                    // Update the reference only when the surface actually moved,
-                    // so sub-threshold motion accumulates instead of being lost.
-                    self.grab_position = (pointer_x, pointer_y);
-                }
-            }
-        }
-
-        if left_button_released {
-            self.dragging = false;
+        if scroll_delta != 0 && self.results.len() > MAX_ROWS {
+            self.scroll = (self.scroll as i64 + scroll_delta as i64).max(0) as usize;
+            self.refresh();
         }
     }
 }
