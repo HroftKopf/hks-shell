@@ -17,7 +17,7 @@ struct Uniforms {
     sel_height: f32,
     row_count: f32,
     tint: vec3<f32>,
-    _pad3: f32,
+    caret_x: f32,
 };
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
@@ -94,6 +94,14 @@ fn fs_main(@builtin(position) frag: vec4<f32>) -> @location(0) vec4<f32> {
     let icon_cov = (1.0 - smootherstep(-0.75, 0.75, icon_d)) * coverage;
     rgb = mix(rgb, vec3<f32>(0.95, 0.95, 0.98), icon_cov);
     a = max(a, icon_cov * 0.92);
+
+    // Blinking text caret in the search bar (caret_x <= 0 = hidden).
+    if (u.caret_x > 0.5) {
+        let cd = sd_round_rect(p - vec2<f32>(u.caret_x, 25.0), vec2<f32>(1.0, 11.0), 1.0);
+        let ccov = (1.0 - smootherstep(-0.75, 0.75, cd)) * coverage;
+        rgb = mix(rgb, vec3<f32>(1.0, 1.0, 1.0), ccov);
+        a = max(a, ccov);
+    }
 
     // Selected-row highlight: bright in the middle, fading to transparent
     // toward its edges (a feathered band, not a glow).

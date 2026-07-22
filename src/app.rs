@@ -44,6 +44,8 @@ pub struct App {
 
     /// Current search query text.
     pub query: String,
+    /// Blinking caret visibility.
+    pub cursor_on: bool,
 
     pub search: Search,
     pub results: Vec<SearchResult>,
@@ -125,7 +127,17 @@ impl App {
     fn on_query_changed(&mut self) {
         self.results = self.search.query(&self.query);
         self.selected = 0;
+        self.cursor_on = true; // keep the caret solid right after typing
         self.sync_panel();
+    }
+
+    /// Flip the caret (called on the blink timer) and redraw.
+    pub fn toggle_cursor(&mut self) {
+        self.cursor_on = !self.cursor_on;
+        if let Some(renderer) = self.renderer.as_mut() {
+            renderer.set_caret(self.cursor_on);
+            renderer.render();
+        }
     }
 
     /// Height the panel needs to show the current results (grows downward).
@@ -173,10 +185,12 @@ impl App {
         } else {
             Some(self.selected.min(visible - 1))
         };
+        let cursor_on = self.cursor_on;
         if let Some(renderer) = self.renderer.as_mut() {
             renderer.set_text(&text, placeholder);
             renderer.set_results(&titles, &subtitles, &icons);
             renderer.set_selection(selection);
+            renderer.set_caret(cursor_on);
             renderer.render();
         }
     }

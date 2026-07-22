@@ -103,10 +103,11 @@ struct Uniforms {
     sel_height: f32,
     row_count: f32,
     tint: [f32; 3],
-    _pad3: f32,
+    caret_x: f32,
 }
 
 impl Uniforms {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         params: &GlassParams,
         width: u32,
@@ -114,6 +115,7 @@ impl Uniforms {
         sel_top: f32,
         sel_height: f32,
         row_count: f32,
+        caret_x: f32,
     ) -> Self {
         Self {
             resolution: [width as f32, height as f32],
@@ -128,7 +130,7 @@ impl Uniforms {
             sel_height,
             row_count,
             tint: params.tint_rgb,
-            _pad3: 0.0,
+            caret_x,
         }
     }
 }
@@ -145,6 +147,8 @@ pub struct Renderer {
     sel_top: f32,
     sel_height: f32,
     row_count: f32,
+    caret_base_x: f32,
+    caret_on: bool,
 
     // Text rendering (glyphon).
     font_system: FontSystem,
@@ -277,7 +281,7 @@ impl Renderer {
             ),
         });
 
-        let uniforms = Uniforms::new(&params, config.width, config.height, 0.0, 0.0, 0.0);
+        let uniforms = Uniforms::new(&params, config.width, config.height, 0.0, 0.0, 0.0, -1.0);
         let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("glass uniforms"),
             size: std::mem::size_of::<Uniforms>() as u64,
@@ -354,6 +358,8 @@ impl Renderer {
             sel_top: 0.0,
             sel_height: 0.0,
             row_count: 0.0,
+            caret_base_x: TEXT_LEFT,
+            caret_on: false,
 
             font_system,
             swash_cache,
@@ -437,6 +443,18 @@ impl Renderer {
         );
         self.text_buffer
             .shape_until_scroll(&mut self.font_system, false);
+
+        // Hide the caret while the placeholder shows; place it after the query.
+        self.caret_base_x = if placeholder {
+            -1.0
+        } else {
+            let w = self
+                .text_buffer
+                .layout_runs()
+                .map(|run| run.line_w)
+                .fold(0.0_f32, f32::max);
+            TEXT_LEFT + w + 1.0
+        };
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
@@ -458,6 +476,7 @@ impl Renderer {
     }
 
     fn write_uniforms(&self) {
+        let caret_x = if self.caret_on { self.caret_base_x } else { -1.0 };
         let uniforms = Uniforms::new(
             &self.params,
             self.config.width,
@@ -465,9 +484,16 @@ impl Renderer {
             self.sel_top,
             self.sel_height,
             self.row_count,
+            caret_x,
         );
         self.queue
             .write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
+    }
+
+    /// Show/hide the text caret (blink).
+    pub fn set_caret(&mut self, on: bool) {
+        self.caret_on = on;
+        self.write_uniforms();
     }
 
     /// Set the highlighted result row (row 0 is the first row under the bar),

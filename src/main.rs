@@ -15,6 +15,11 @@ use wayland_client::{
 };
 use wayland_protocols::wp::viewporter::client::wp_viewporter::WpViewporter;
 
+use std::os::fd::AsFd;
+use std::time::{Duration, Instant};
+
+use rustix::event::{PollFd, PollFlags, Timespec, poll};
+
 use app::{App, OUTPUT_HEIGHT, OUTPUT_WIDTH};
 
 const SURFACE_WIDTH: i32 = 580;
@@ -67,6 +72,7 @@ fn main() {
         keyboard: None,
 
         query: String::new(),
+        cursor_on: true,
 
         search: search::Search::new(),
         results: Vec::new(),
@@ -99,9 +105,45 @@ fn main() {
     // created and first frame drawn in the configure handler.
     app.layer_surface.commit();
 
+    // Event loop with a caret-blink timer: poll the Wayland fd with a timeout,
+    // toggling the caret whenever the blink interval elapses.
+    let blink = Duration::from_millis(530);
+    let mut last_blink = Instant::now();
+
     while app.running {
+        let _ = connection.flush();
         event_queue
-            .blocking_dispatch(&mut app)
+            .dispatch_pending(&mut app)
             .expect("Wayland event dispatch error");
+        if !app.running {
+            break;
+        }
+
+        let Some(read_guard) = event_queue.prepare_read() else {
+            continue;
+        };
+
+        let remaining = blink.saturating_sub(last_blink.elapsed());
+        let timeout = Timespec {
+            tv_sec: remaining.as_secs() as _,
+            tv_nsec: remaining.subsec_nanos() as _,
+        };
+        let fd = connection.as_fd();
+        let mut fds = [PollFd::new(&fd, PollFlags::IN)];
+        let ready = poll(&mut fds, Some(&timeout)).map(|n| n > 0).unwrap_or(false);
+
+        if ready {
+            let _ = read_guard.read();
+        } else {
+            drop(read_guard);
+        }
+        event_queue
+            .dispatch_pending(&mut app)
+            .expect("Wayland event dispatch error");
+
+        if last_blink.elapsed() >= blink {
+            last_blink = Instant::now();
+            app.toggle_cursor();
+        }
     }
 }
